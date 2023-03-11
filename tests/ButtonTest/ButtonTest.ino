@@ -1,8 +1,8 @@
-#define BUTTON_PIN 7
+#define BUTTON_PIN 2
 
 void setup() {
     Serial.begin(9600);
-    pinMode(BUTTON_PIN, INPUT);
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
 }
 
 void loop() {
