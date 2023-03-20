@@ -1,15 +1,25 @@
 #include <IRremote.h>
 #include <DHT.h>
+#include <LiquidCrystal_I2C.h>
 
 /* PIN CONFIGURATION */
 #define DHT_PIN 2
 #define DHT_TYPE DHT11
 #define IR_PIN 3
+#define VOLTAGE_PIN A0
+#define CURRENT_PIN A1
+#define COMPRESSOR_RELAY_PIN 4
 
 /* SYSTEM VARIABLES */
 float temperature = 0;
 float humidity = 0;
 float heatIndex = 0;
+
+int desired_temperature = 0;
+
+/* COMPRESSOR VARS */
+#define COMPRESSOR_OFF HIGH
+#define COMPRESSOR_ON LOW
 
 /* IR REMOTE VALUES */
 const String IR_TEMP_DOWN = "b";        // ***
@@ -17,7 +27,34 @@ const String IR_TEMP_UP = "7";          // to be change depending on the
 const String IR_POWER = "2";            // specific remote signal values 
 const String IR_POWER_SAVING = "68";    // *** 
 
+/* BOOLEANS */
+bool isPowerSaving = false;
+bool isTesting = true;
+
+/* POWER CONSUMPTION VARS */
+float voltage = 0.0;
+float current = 0.0;
+int power = 0;      // in watts
+
 DHT dht(DHT_PIN, DHT_TYPE);
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+/* LCD CUSTOM CHARACTERS */
+byte lightning[] = { 0x00, 0x02, 0x04, 0x0C, 0x1F, 0x06, 0x04, 0x08 };
+byte degreeCelsius[] = { 0x00, 0x10, 0x06, 0x09, 0x08, 0x08, 0x09, 0x06 };
+byte lock[] = { 0x00, 0x0E, 0x11, 0x11, 0x1F, 0x1B, 0x1B, 0x1F };
+byte arrowUp[] = { 0x1F, 0x1B, 0x11, 0x0A, 0x1B, 0x1B, 0x1B, 0x1F };
+byte arrowDown[] = { 0x1F, 0x1B, 0x1B, 0x1B, 0x0A, 0x11, 0x1B, 0x1F };
+byte check[] = { 0x00, 0x01, 0x03, 0x16, 0x1C, 0x08, 0x00, 0x00 };
+byte unlock[] = { 0x0E, 0x11, 0x11, 0x01, 0x1F, 0x1B, 0x1B, 0x1F };
+byte separator[] = { 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11 };
+
+/* POWER SAVING VARS */
+const int MAX_POWER_SAVING_TEMP = 27; // inclusive
+const int MIN_POWER_SAVING_TEMP = 24; // inclusive
+
+unsigned long previous_display_time = 0;
 
 void setup() {
     // Initializes Serial for debugging
@@ -26,37 +63,128 @@ void setup() {
     // Starts up IR sensor
     IrReceiver.begin(IR_PIN, ENABLE_LED_FEEDBACK);
 
+    // pin initialization 
+    pinMode(COMPRESSOR_RELAY_PIN, OUTPUT);
+
     // Starts up DHT sensor
     dht.begin();
+
+    // initialize LCD
+    lcd.init();
+    lcd.backlight();
+
+    // create custom characters
+    lcd.createChar(0, lightning);
+    lcd.createChar(1, degreeCelsius);
+    lcd.createChar(2, lock);
+    lcd.createChar(3, arrowUp);
+    lcd.createChar(4, arrowDown);
+    lcd.createChar(5, check);
+    lcd.createChar(6, unlock);
+    lcd.createChar(7, separator);
+
+    // for testing purposes
+    if (isTesting) {
+        temperature = 20;
+        desired_temperature = 24;
+    }
+
+    // sets the initial state of compressor relay as low or off
+    digitalWrite(COMPRESSOR_RELAY_PIN, COMPRESSOR_OFF);
 }
 
 void loop() {
-    // read IRremote
     // read Temperature
-    // read system settings
-    // analyze actual temperature and desired tempearture 
-    // perform necessary action best fit on the desired and actual temperature
+    readTemperature();
+
     // read voltage
+    readVoltage();
+
     // read current
+    readCurrent();
+
     // calculate power
+    power = voltage * current;
+
+    // read IRremote
+    readIRremote();
+
+    // controls the action for the aircon compressor
+    controlCompressor();
+
     // display temperature and power
+    displayData();
+}
+
+void controlCompressor() {
+    // create integer value of temperature
+    int converted_temperature = int(temperature);
+    if (converted_temperature > desired_temperature) digitalWrite(COMPRESSOR_RELAY_PIN, COMPRESSOR_ON);
+    else digitalWrite(COMPRESSOR_RELAY_PIN, COMPRESSOR_OFF);
 }
 
 void readIRremote() {
-    /* TODO */
-    /* read IRremote signals */
-    /* perform specific actions based on the signal read */
-    // if ir_signal == b (volume down)
-        // decrease the desired temperature by 1 degree celsius 
-    // if ir_signal == 7 (volume up)
-        // increase the temperature by 1 degree celsius 
-    // if ir_signal == 2 (power)
-        // to be added
-    // if ir_signal == 68 (enter)
-        // toggle power saving mode after a period of time
+    if (IrReceiver.decode()) {
+        String ir_code = String(IrReceiver.decodedIRData.command, HEX);
+        Serial.println(ir_code);
+
+        // adjusting the desired temperature
+        if (ir_code == "15") {
+            if (!isPowerSaving || (isPowerSaving && desired_temperature < MAX_POWER_SAVING_TEMP)) {
+                desired_temperature++;
+                delay(1000); 
+            }
+        }
+        if (ir_code == "7") {
+            if (!isPowerSaving || (isPowerSaving && desired_temperature > MIN_POWER_SAVING_TEMP)) {
+                desired_temperature--;
+                delay(1000); 
+            }
+        }
+
+        // only testing 
+        // actual temperature can be adjusted
+        if (isTesting) {
+            if (ir_code == "d") {
+                temperature++;
+                delay(1000);
+            }
+            if (ir_code == "19") {
+                temperature--;
+                delay(1000);
+            }
+        }
+
+        // toggles the power saving mode
+        if (ir_code == "43") {
+            Serial.println("Power Saving Mode INITIALIZED!");
+            Serial.println("Waiting for 5 seconds to fully toggle...");
+            delay(1000);
+            IrReceiver.resume();
+            delay(4000);
+            IrReceiver.decode();
+            ir_code = String(IrReceiver.decodedIRData.command, HEX);
+
+            // checks whether the user still clicks the power saving mode button
+            if (ir_code == "43") {
+                isPowerSaving = !isPowerSaving;
+                Serial.println("Power Saving Mode Toggled!");
+                Serial.print("PSM: ");
+                Serial.println(isPowerSaving);
+                if (isPowerSaving && (desired_temperature > MAX_POWER_SAVING_TEMP || desired_temperature < MIN_POWER_SAVING_TEMP)) desired_temperature = MIN_POWER_SAVING_TEMP;
+                delay(1000);
+            }
+        }
+
+        IrReceiver.resume();
+    }
 }
 
 void readTemperature() {
+    // for testing only
+    // disregards the actual temperature values
+    if (isTesting) return;
+
     // Wait a few seconds between measurements.
     delay(2000);
 
@@ -67,7 +195,7 @@ void readTemperature() {
     temperature = dht.readTemperature();
 
     // Check if any reads failed and exit early (to try again).
-    if (isnan(h) || isnan(t)) {
+    if (isnan(humidity) || isnan(temperature)) {
         Serial.println(F("Failed to read from DHT sensor!"));
         return;
     }
@@ -86,22 +214,83 @@ void readTemperature() {
     Serial.println(F("°C "));
 }
 
-void analyzeTemperatures() {
-    // 
+void readVoltage() {
+    if (isTesting) return;
 }
 
-void reachDesiredTemperature() {
-    // if not in power saving mode, desired temperature can be anything
-        // if actual temperature < desired temperature
-            // turn on relay
-        // if actual temperature > desired temperature
-            // turn off relay
-        // return
-    // if in power saving mode, desired temperature can only be between 24-27 inclusive
-        // if desired temperature is greater than MAX_POWER_SAVING_TEMP or desired temperature is lesser than MIN_POWER_SAVING_TEMP
-            // return
-        // if actual temperature < desired temperature
-            // turn on relay
-        // if actual temperature > desired temperature
-            // turn off relay
+void readCurrent() {
+    if (isTesting) return;
+}
+
+void displayData() {
+    if (millis() - previous_display_time < 2000) return;
+    previous_display_time = millis();
+
+    lcd.clear();
+
+    /* ROW 0*/
+    // show lightning symbol
+    lcd.setCursor(0, 0);
+    lcd.write(0);
+
+    // show power in watts
+    lcd.setCursor(2, 0);
+    lcd.print(power);
+    // show W symbol
+    lcd.setCursor(7, 0);
+    lcd.print("W");
+
+    // converts actual temperature from float to int for better comparison
+    int converted_temperature = int(temperature);
+
+    // show compressor status
+    // clears the compressor status placeholder first before writing new one
+    lcd.setCursor(10, 0);
+    lcd.print(" ");
+    lcd.setCursor(10, 1);
+    lcd.print(" ");
+    // create integer value of temperature
+    if (desired_temperature == converted_temperature) {
+        lcd.setCursor(10, 0);
+        lcd.write(5); // writes check
+    }  
+    if (desired_temperature > converted_temperature) {
+        lcd.setCursor(10, 1);
+        lcd.write(4); // writes arrow down
+    }
+    if (desired_temperature < converted_temperature) {
+        lcd.setCursor(10, 1);
+        lcd.write(3); // writes arrow up 
+    }
+
+    // show desired temperature
+    lcd.setCursor(13, 0);
+    lcd.print(desired_temperature);
+    // show degree celsius 
+    lcd.setCursor(15, 0);
+    lcd.write(1);
+
+    // show actual temperature
+    lcd.setCursor(13, 1);
+    lcd.print(converted_temperature);
+    // show degree celsius 
+    lcd.setCursor(15, 1);
+    lcd.write(1);
+
+    /* ROW 1*/
+    // show operation mode
+    if (isPowerSaving) {
+        lcd.setCursor(0, 1);
+        lcd.print("SAVING");        
+        // show lock symbol
+        lcd.setCursor(7, 1);
+        lcd.write(2);
+    }
+    else {
+        lcd.setCursor(0, 1);
+        lcd.print("NORMAL");        
+        // show unlock symbol
+        lcd.setCursor(7, 1);
+        lcd.write(6);
+    }
 }
