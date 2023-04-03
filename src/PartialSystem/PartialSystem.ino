@@ -2,6 +2,9 @@
 #include <DHT.h>
 #include <LiquidCrystal_I2C.h>
 
+#include "ZMPT101B.h"
+#include "ACS712.h"
+
 /* PIN CONFIGURATION */
 #define DHT_PIN 2
 #define DHT_TYPE DHT11
@@ -34,7 +37,7 @@ bool isTesting = true;
 /* POWER CONSUMPTION VARS */
 float voltage = 0.0;
 float current = 0.0;
-int power = 0;      // in watts
+float power = 0;      // in watts
 
 DHT dht(DHT_PIN, DHT_TYPE);
 
@@ -56,6 +59,9 @@ const int MIN_POWER_SAVING_TEMP = 24; // inclusive
 
 unsigned long previous_display_time = 0;
 
+ZMPT101B voltageSensor(34);
+ACS712 currentSensor(ACS712_20A, 36);
+
 void setup() {
     // Initializes Serial for debugging
     Serial.begin(9600);
@@ -68,6 +74,17 @@ void setup() {
 
     // Starts up DHT sensor
     dht.begin();
+
+    // voltage and current sensor initialization
+    delay(100);
+    voltageSensor.setSensitivity(0.0025);
+    voltageSensor.setZeroPoint(2621);
+    
+    currentSensor.setZeroPoint(2943);
+    currentSensor.setSensitivity(0.15);
+
+    // Caliberation Command Need To Be Run On First Upload.  
+    // Calibrate();
 
     // initialize LCD
     lcd.init();
@@ -216,12 +233,16 @@ void readTemperature() {
 
 void readVoltage() {
     if (isTesting) return;
+
+    voltage = voltageSensor.getVoltageAC();
+    if(voltage<55) voltage=0;
 }
 
 void readCurrent() {
     if (isTesting) return;
 
-    // TODO: add proper current reading for ACS712 sensor
+    current = currentSensor.getCurrentAC();
+    if(current<0.15) current=0;
 }
 
 void displayData() {
@@ -294,5 +315,19 @@ void displayData() {
         // show unlock symbol
         lcd.setCursor(7, 1);
         lcd.write(6);
+    }
+}
+
+void Calibrate() {
+    while (1) {
+        voltageSensor.calibrate();  
+        Serial.print("Voltage Zero Point: ");
+        Serial.println(voltageSensor.getZeroPoint());
+
+        currentSensor.calibrate();  
+        Serial.print("Current Zero Point:");
+        Serial.println(currentSensor.getZeroPoint());
+
+        delay(500);
     }
 }
