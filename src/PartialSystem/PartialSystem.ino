@@ -59,8 +59,8 @@ const int MIN_POWER_SAVING_TEMP = 24; // inclusive
 
 unsigned long previous_display_time = 0;
 
-ZMPT101B voltageSensor(34);
-ACS712 currentSensor(ACS712_20A, 36);
+ZMPT101B voltageSensor(A3);
+ACS712 currentSensor(ACS712_30A, A2);
 
 void setup() {
     // Initializes Serial for debugging
