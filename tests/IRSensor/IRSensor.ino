@@ -1,85 +1,81 @@
-#include <Wifi.h>
+#include <IRremote.h>
+#include <DHT.h>
+#include <LiquidCrystal_I2C.h>
 
 #include "ZMPT101B.h"
 #include "ACS712.h"
 
-/* Put your SSID & Password */
-const char* ssid = "Cooling Mitigation";  // Enter SSID here
-const char* password = "12345678";  //Enter Password here
+/* PIN CONFIGURATION */
+#define DHT_PIN 2
+#define DHT_TYPE DHT11
+#define IR_PIN 3
+#define VOLTAGE_PIN A0
+#define CURRENT_PIN A1
+#define COMPRESSOR_RELAY_PIN 4
 
-/* Put IP Address details */
-IPAddress local_ip(192,168,1,1);
-IPAddress gateway(192,168,1,1);
-IPAddress subnet(255,255,255,0);
+/* SYSTEM VARIABLES */
+float temperature = 0;
+float humidity = 0;
+float heatIndex = 0;
 
-ESP8266WebServer server(80);
+int desired_temperature = 0;
 
-#define DHTTYPE DHT11
-uint8_t DHT1_PIN = D5;
-uint8_t DHT2_PIN = D6;
-uint8_t DHT3_PIN = D6;
-uint8_t DHT4_PIN = D6;
+/* COMPRESSOR VARS */
+#define COMPRESSOR_OFF HIGH
+#define COMPRESSOR_ON LOW
 
-uint8_t PUMP_PIN = D4;
-bool pumpStatus = HIGH;
+/* IR REMOTE VALUES */
+const String IR_TEMP_DOWN = "b";        // ***
+const String IR_TEMP_UP = "7";          // to be change depending on the 
+const String IR_POWER = "2";            // specific remote signal values 
+const String IR_POWER_SAVING = "68";    // *** 
 
-DHT dht1(DHT1_PIN, DHTTYPE);
-DHT dht2(DHT2_PIN, DHTTYPE);
-DHT dht3(DHT3_PIN, DHTTYPE);
-DHT dht4(DHT4_PIN, DHTTYPE);
+/* BOOLEANS */
+bool isPowerSaving = false;
+bool isTesting = false;
 
-unsigned long previousMillis = 0;
-const long interval = 2000;
+/* POWER CONSUMPTION VARS */
+float voltage = 0.0;
+float current = 0.0;
+float power = 0;      // in watts
 
-float t1 = 0.0;
-float h1 = 0.0;
-float t2 = 0.0;
-float h2 = 0.0;
-float t3 = 0.0;
-float h3 = 0.0;
-float t4 = 0.0;
-float h4 = 0.0;
+DHT dht(DHT_PIN, DHT_TYPE);
 
-float average_temperature = 0.0;
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-const float TEMP_THRESHOLD = 30.0; // in degree celsius
-const int PUMPING_DURATION = 10; // in seconds
+/* LCD CUSTOM CHARACTERS */
+byte lightning[] = { 0x00, 0x02, 0x04, 0x0C, 0x1F, 0x06, 0x04, 0x08 };
+byte degreeCelsius[] = { 0x00, 0x10, 0x06, 0x09, 0x08, 0x08, 0x09, 0x06 };
+byte lock[] = { 0x00, 0x0E, 0x11, 0x11, 0x1F, 0x1B, 0x1B, 0x1F };
+byte arrowUp[] = { 0x00, 0x04, 0x0E, 0x15, 0x04, 0x04, 0x00, 0x00 };
+byte arrowDown[] = { 0x00, 0x00, 0x04, 0x04, 0x15, 0x0E, 0x04, 0x00 };
+byte check[] = { 0x00, 0x01, 0x03, 0x16, 0x1C, 0x08, 0x00, 0x00 };
+byte unlock[] = { 0x0E, 0x11, 0x11, 0x01, 0x1F, 0x1B, 0x1B, 0x1F };
+byte separator[] = { 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11 };
 
-unsigned long pumping_start_time = 0;
-bool isPumping = false;
+/* POWER SAVING VARS */
+const int MAX_POWER_SAVING_TEMP = 27; // inclusive
+const int MIN_POWER_SAVING_TEMP = 24; // inclusive
 
-ZMPT101B voltageSensor(34);
-ACS712 currentSensor(ACS712_20A, 36);
+unsigned long previous_display_time = 0;
 
-float power=0;
-float voltage=0;
-float current=0;
+ZMPT101B voltageSensor(A3);
+ACS712 currentSensor(ACS712_30A, A2);
 
 void setup() {
-    Serial.begin(115200);
-    pinMode(PUMP_PIN, OUTPUT);
-    pinMode(DHT1_PIN, INPUT);
-    pinMode(DHT2_PIN, INPUT);
+    // Initializes Serial for debugging
+    Serial.begin(9600);
 
-    WiFi.softAP(ssid, password);
-    WiFi.softAPConfig(local_ip, gateway, subnet);
-    delay(100);
-    
-    server.on("/", handle_OnConnect);
-    server.on("/pumpOn", handlePumpOn);
-    server.on("/pumpOff", handlePumpOff);
-    server.onNotFound(handle_NotFound);
-    
-    server.begin();
-    Serial.println("HTTP server started");
+    // Starts up IR sensor
+    IrReceiver.begin(IR_PIN, ENABLE_LED_FEEDBACK);
 
-    dht1.begin();
-    dht2.begin();
-    dht3.begin();
-    dht4.begin();
+    // pin initialization 
+    pinMode(COMPRESSOR_RELAY_PIN, OUTPUT);
 
-    digitalWrite(PUMP_PIN, HIGH);
+    // Starts up DHT sensor
+    dht.begin();
 
+    // voltage and current sensor initialization
     delay(100);
     voltageSensor.setSensitivity(0.0025);
     voltageSensor.setZeroPoint(2621);
@@ -89,216 +85,236 @@ void setup() {
 
     // Caliberation Command Need To Be Run On First Upload.  
     // Calibrate();
+
+    // initialize LCD
+    lcd.init();
+    lcd.backlight();
+
+    // create custom characters
+    lcd.createChar(0, lightning);
+    lcd.createChar(1, degreeCelsius);
+    lcd.createChar(2, lock);
+    lcd.createChar(3, arrowUp);
+    lcd.createChar(4, arrowDown);
+    lcd.createChar(5, check);
+    lcd.createChar(6, unlock);
+    lcd.createChar(7, separator);
+
+    // for testing purposes
+    if (isTesting) {
+        temperature = 20;
+        desired_temperature = 24;
+    }
+
+    // sets the initial state of compressor relay as low or off
+    digitalWrite(COMPRESSOR_RELAY_PIN, COMPRESSOR_OFF);
 }
 
 void loop() {
-    server.handleClient();
+    // read Temperature
+    readTemperature();
 
-    readDHT();
-    readPower();
+    // read voltage
+    readVoltage();
 
-    average_temperature = (t1 + t2 + t3 + t4) / 4;
+    // read current
+    readCurrent();
 
-    Serial.print("Temp1: ");
-    Serial.print(t1);
-    Serial.print(" Humid1: ");
-    Serial.println(h1);
+    // calculate power
+    power = voltage * current;
 
-    Serial.print("Temp2: ");
-    Serial.println(t2);
-    Serial.print(" Humid2: ");
-    Serial.println(h2);
+    // read IRremote
+    readIRremote();
 
-    Serial.print("Temp3: ");
-    Serial.println(t3);
-    Serial.print(" Humid3: ");
-    Serial.println(h3);
+    // controls the action for the aircon compressor
+    controlCompressor();
 
-    Serial.print("Temp4: ");
-    Serial.println(t4);
-    Serial.print(" Humid4: ");
-    Serial.println(h4);
-
-    Serial.print("Voltage: ");
-    Serial.println(voltage);
-    Serial.print(" Current: ");
-    Serial.print(current);
-    Serial.print(" Power: ");
-    Serial.println(power);
-
-    Serial.print("Is pumping: ");
-    Serial.println(isPumping);
-
-    Serial.print("Average Temp: ");
-    Serial.println(average_temperature);
-
-    Serial.print("Pumping start time: ");
-    Serial.println(pumping_start_time);  
-    Serial.println("- - - - - -");
-
-    analyzeCoolingMitigation();  
-
-    if (isPumping) return;
-    
-    if (pumpStatus) digitalWrite(PUMP_PIN, LOW);
-    else digitalWrite(PUMP_PIN, HIGH);
+    // display temperature and power
+    displayData();
 }
 
-void analyzeCoolingMitigation() {
-    unsigned long current_pumping_time = millis();
+void controlCompressor() {
+    // create integer value of temperature
+    int converted_temperature = int(temperature);
+    if (converted_temperature > desired_temperature) digitalWrite(COMPRESSOR_RELAY_PIN, COMPRESSOR_ON);
+    else digitalWrite(COMPRESSOR_RELAY_PIN, COMPRESSOR_OFF);
+}
 
-    if (isPumping && current_pumping_time - pumping_start_time >= (PUMPING_DURATION * 1000)) {  
-        digitalWrite(PUMP_PIN, HIGH);
-        isPumping = false;
+void readIRremote() {
+    if (IrReceiver.decode()) {
+        String ir_code = String(IrReceiver.decodedIRData.command, HEX);
+        Serial.println(ir_code);
+
+        // adjusting the desired temperature
+        if (ir_code == "15") {
+            if (!isPowerSaving || (isPowerSaving && desired_temperature < MAX_POWER_SAVING_TEMP)) {
+                desired_temperature++;
+                delay(1000); 
+            }
+        }
+        if (ir_code == "7") {
+            if (!isPowerSaving || (isPowerSaving && desired_temperature > MIN_POWER_SAVING_TEMP)) {
+                desired_temperature--;
+                delay(1000); 
+            }
+        }
+
+        // only testing 
+        // actual temperature can be adjusted
+        if (isTesting) {
+            if (ir_code == "d") {
+                temperature++;
+                delay(1000);
+            }
+            if (ir_code == "19") {
+                temperature--;
+                delay(1000);
+            }
+        }
+
+        // toggles the power saving mode
+        if (ir_code == "43") {
+            Serial.println("Power Saving Mode INITIALIZED!");
+            Serial.println("Waiting for 5 seconds to fully toggle...");
+            delay(1000);
+            IrReceiver.resume();
+            delay(4000);
+            IrReceiver.decode();
+            ir_code = String(IrReceiver.decodedIRData.command, HEX);
+
+            // checks whether the user still clicks the power saving mode button
+            if (ir_code == "43") {
+                isPowerSaving = !isPowerSaving;
+                Serial.println("Power Saving Mode Toggled!");
+                Serial.print("PSM: ");
+                Serial.println(isPowerSaving);
+                if (isPowerSaving && (desired_temperature > MAX_POWER_SAVING_TEMP || desired_temperature < MIN_POWER_SAVING_TEMP)) desired_temperature = MIN_POWER_SAVING_TEMP;
+                delay(1000);
+            }
+        }
+
+        IrReceiver.resume();
     }
-    
-    if (average_temperature > TEMP_THRESHOLD && !isPumping) {
-        digitalWrite(PUMP_PIN, LOW);
-        isPumping = true;
-        pumping_start_time = millis();
+}
+
+void readTemperature() {
+    // for testing only
+    // disregards the actual temperature values
+    if (isTesting) return;
+
+    // Wait a few seconds between measurements.
+    delay(2000);
+
+    // Reading temperature or humidity takes about 250 milliseconds!
+    // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+    humidity = dht.readHumidity();
+    // Read temperature as Celsius (the default)
+    temperature = dht.readTemperature();
+
+    // Check if any reads failed and exit early (to try again).
+    if (isnan(humidity) || isnan(temperature)) {
+        Serial.println(F("Failed to read from DHT sensor!"));
+        return;
     }
+
+    // Compute heat index in Celsius (isFahreheit = false)
+    heatIndex = dht.computeHeatIndex(temperature, humidity, false);
+
+    // serial output for debugging
+    Serial.print(F("Humidity: "));
+    Serial.print(humidity);
+    Serial.print(F("%  Temperature: "));
+    Serial.print(temperature);
+    Serial.print(F("°C "));
+    Serial.print(F(" Heat index: "));
+    Serial.print(heatIndex);
+    Serial.println(F("°C "));
 }
 
-void handle_OnConnect() {
-    pumpStatus = LOW;
-    Serial.println("Pump Status: OFF");
-    server.send(200, "text/html", SendHTML()); 
+void readVoltage() {
+    if (isTesting) return;
+
+    voltage = voltageSensor.getVoltageAC();
+    if(voltage<55) voltage=0;
 }
 
-void handlePumpOn() {
-    pumpStatus = LOW;
-    Serial.println("Pump Status: ON");
-    server.send(200, "text/html", SendHTML()); 
+void readCurrent() {
+    if (isTesting) return;
+
+    current = currentSensor.getCurrentAC();
+    if(current<0.15) current=0;
 }
 
-void handlePumpOff() {
-    pumpStatus = HIGH;
-    Serial.println("Pump Status: OFF");
-    server.send(200, "text/html", SendHTML()); 
-}
+void displayData() {
+    if (millis() - previous_display_time < 2000) return;
+    previous_display_time = millis();
 
-void handle_NotFound(){
-    server.send(404, "text/plain", "Not found");
-}
+    lcd.clear();
 
-String SendHTML(){
-    String ptr = "<!DOCTYPE html> <html>\n";
-    ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
-    ptr +="<title>LED Control</title>\n";
-    ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n";
-    ptr +="body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px;}\n";
-    ptr +=".button {display: block;width: 80px;background-color: #1abc9c;border: none;color: white;padding: 13px 20px;text-decoration: none;font-size: 18px;margin: 0px auto 35px;cursor: pointer;border-radius: 4px;}\n";
-    ptr +=".button-on {background-color: #1abc9c;}\n";
-    ptr +=".button-on:active {background-color: #16a085;}\n";
-    ptr +=".button-off {background-color: #34495e;}\n";
-    ptr +=".button-off:active {background-color: #2c3e50;}\n";
-    ptr +="p {font-size: 14px;color: #888;margin-bottom: 10px;}\n";
-    ptr += ".styled-table{border-collapse:collapse; border-radius: 4px; margin-left: auto; margin-right: auto; margin-bottom: 10px; font-size: 0.9em; font-family: sans-serif; min-width: 350px; box-shadow: 0 0 20px rgba(0,0,0,0.15);}";
-    ptr += ".styled-table thead tr{ background-color: #009879; color: #ffffff; text-align: center; }";
-    ptr += ".styled-table th, .styled-table td{ padding: 12px 15px; }";
-    ptr += ".styled-table tbody tr { border-bottom: 1px solid #dddddd; }";
-    ptr += ".styled-table tbody tr:nth-of-type(even) { background-color: #f3f3f3; }";
-    ptr += ".styled-table tbody tr:last-of-type { border-bottom: 2px solid #009879; }";
-    ptr +="</style>\n";
-    ptr +="</head>\n";
-    ptr +="<body>\n";
-    ptr +="<h1>Solar Panel Cooling Mitigation System</h1>\n";
-    ptr +="<h3>Web Server</h3>\n";
+    /* ROW 0*/
+    // show lightning symbol
+    lcd.setCursor(0, 0);
+    lcd.write(0);
 
-    // Temparature Table
-    ptr += "<table class=\"styled-table\"><thead><tr><th>DHT</th><th>Temperature</th><th>Humidity</th></tr></thead>"; 
-    ptr += "<tbody>";
+    // show power in watts
+    lcd.setCursor(2, 0);
+    lcd.print(power);
+    // show W symbol
+    lcd.setCursor(7, 0);
+    lcd.print("W");
 
-    ptr += "<tr><td>1</td><td>";  // dht1
-    ptr += t1;
-    ptr += " *C</td><td>";
-    ptr += h1;
-    ptr += " %</td></tr>";
+    // converts actual temperature from float to int for better comparison
+    int converted_temperature = int(temperature);
 
-    ptr += "<tr><td>2</td><td>"; // dht2 
-    ptr += t2;
-    ptr += " *C</td><td>";
-    ptr += h2;
-    ptr += " %</td></tr>";
+    // show compressor status
+    // clears the compressor status placeholder first before writing new one
+    lcd.setCursor(10, 0);
+    lcd.print(" ");
+    lcd.setCursor(10, 1);
+    lcd.print(" ");
+    // create integer value of temperature
+    if (desired_temperature == converted_temperature) {
+        lcd.setCursor(10, 0);
+        lcd.write(5); // writes check
+    }  
+    if (desired_temperature > converted_temperature) {
+        lcd.setCursor(10, 1);
+        lcd.write(4); // writes arrow down
+    }
+    if (desired_temperature < converted_temperature) {
+        lcd.setCursor(10, 1);
+        lcd.write(3); // writes arrow up 
+    }
 
-    ptr += "<tr><td>3</td><td>"; // dht3 
-    ptr += t3;
-    ptr += " *C</td><td>";
-    ptr += h3;
-    ptr += " %</td></tr>";
+    // show desired temperature
+    lcd.setCursor(13, 0);
+    lcd.print(desired_temperature);
+    // show degree celsius 
+    lcd.setCursor(15, 0);
+    lcd.write(1);
 
-    ptr += "<tr><td>4</td><td>"; // dht4 
-    ptr += t4;
-    ptr += " *C</td><td>";
-    ptr += h4;
-    ptr += " %</td></tr>";
+    // show actual temperature
+    lcd.setCursor(13, 1);
+    lcd.print(converted_temperature);
+    // show degree celsius 
+    lcd.setCursor(15, 1);
+    lcd.write(1);
 
-    ptr += "<tbody></table>";
-
-    // Power Table
-    ptr += "<table class=\"styled-table\"><thead><tr><th>Voltage</th><th>Current</th><th>Power</th></tr></thead>"; 
-    ptr += "<tbody>";
-    ptr += "<tr><td>";
-    ptr += voltage;
-    ptr += " V</td><td>";
-    ptr += current;
-    ptr += " *C</td><td>";
-    ptr += power;
-    ptr += " %</td></tr>";
-    ptr += "<tbody></table>";
-
-    // Pump Button
-    if (pumpStatus) ptr +="<p>Water Pump Status: ON</p><a class=\"button button-off\" href=\"/pumpOff\">OFF</a>\n";
-    else ptr +="<p>Water Pump Status: OFF</p><a class=\"button button-on\" href=\"/pumpOn\">ON</a>\n";
-
-    ptr +="</body>\n";
-    ptr +="</html>\n";
-
-    return ptr;
-}
-
-void readDHT() {
-    if (millis() - previousMillis >= interval) {
-        // save the last time you updated the DHT values
-        previousMillis = millis();
-        
-        // * Read temperature as Celsius (the default)
-        float newT1 = dht1.readTemperature();
-        float newT2 = dht2.readTemperature();
-        float newT3 = dht3.readTemperature();
-        float newT4 = dht4.readTemperature();
-
-        // if temperature read failed, don't change t value
-        if (isnan(newT1)) Serial.println("Failed to read from DHT sensor 1!");
-        else t1 = newT1;
-        
-        if (isnan(newT2)) Serial.println("Failed to read from DHT sensor 2!");
-        else t2 = newT2;
-
-        if (isnan(newT3)) Serial.println("Failed to read from DHT sensor 3!");
-        else t3 = newT3;
-
-        if (isnan(newT4)) Serial.println("Failed to read from DHT sensor 4!");
-        else t4 = newT4;
-
-        // * Read Humidity
-        float newH1 = dht1.readHumidity();
-        float newH2 = dht2.readHumidity();
-        float newH3 = dht3.readHumidity();
-        float newH4 = dht4.readHumidity();
-        
-        // if humidity read failed, don't change h value 
-        if (isnan(newH1)) Serial.println("Failed to read humidity from DHT sensor 1!");
-        else h1 = newH1;
-
-        if (isnan(newH2)) Serial.println("Failed to read humidity from DHT sensor 2!");
-        else h2 = newH2;
-
-        if (isnan(newH3)) Serial.println("Failed to read humidity from DHT sensor 3!");
-        else h3 = newH3;
-
-        if (isnan(newH4)) Serial.println("Failed to read humidity from DHT sensor 4!");
-        else h4 = newH4;
+    /* ROW 1*/
+    // show operation mode
+    if (isPowerSaving) {
+        lcd.setCursor(0, 1);
+        lcd.print("SAVING");        
+        // show lock symbol
+        lcd.setCursor(7, 1);
+        lcd.write(2);
+    }
+    else {
+        lcd.setCursor(0, 1);
+        lcd.print("NORMAL");        
+        // show unlock symbol
+        lcd.setCursor(7, 1);
+        lcd.write(6);
     }
 }
 
@@ -314,14 +330,4 @@ void Calibrate() {
 
         delay(500);
     }
-}
-
-void readPower() {
-    voltage = voltageSensor.getVoltageAC();
-    if(voltage<55) voltage=0;
-  
-    current = currentSensor.getCurrentAC();
-    if(current<0.15) current=0;
-
-    power = voltage * current;
 }

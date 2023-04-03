@@ -101,13 +101,11 @@ void setup() {
     lcd.createChar(7, separator);
 
     // for testing purposes
-    if (isTesting) {
-        temperature = 20;
-        desired_temperature = 24;
-    }
+    if (isTesting) temperature = 20;
 
     // sets the initial state of compressor relay as low or off
     digitalWrite(COMPRESSOR_RELAY_PIN, COMPRESSOR_OFF);
+    desired_temperature = 24;
 }
 
 void loop() {
