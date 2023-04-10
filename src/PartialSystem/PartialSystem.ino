@@ -230,14 +230,31 @@ void readTemperature() {
 }
 
 void readVoltage() {
-    if (isTesting) return;
+    if (isTesting) {
+        voltage = random(218, 223);
+        return;
+    }
 
     voltage = voltageSensor.getVoltageAC();
     if(voltage<55) voltage=0;
 }
 
 void readCurrent() {
-    if (isTesting) return;
+    if (isTesting) {
+        int intTemp = int(temperature);
+        if (intTemp == 16) current = 6 + (random(67, 72));
+        if (intTemp == 17) current = 6 + (random(41, 46));
+        if (intTemp == 18) current = 6 + (random(16, 21));
+        if (intTemp == 19) current = 5 + (random(95, 100));
+        if (intTemp == 20) current = 5 + (random(74, 79));
+        if (intTemp == 21) current = 5 + (random(51, 56));
+        if (intTemp == 22) current = 5 + (random(26, 31));
+        if (intTemp == 23) current = 5 + (random(2, 7));
+        if (intTemp == 24) current = 4 + (random(76, 81));
+        if (intTemp == 25) current = 4 + (random(67, 72));
+        if (intTemp == 26) current = 4 + (random(33, 38));
+        if (intTemp == 27) current = 4 + (random(0, 3));
+    }
 
     current = currentSensor.getCurrentAC();
     if(current<0.15) current=0;
