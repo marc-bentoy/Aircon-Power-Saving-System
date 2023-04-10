@@ -314,6 +314,19 @@ void displayData() {
         lcd.setCursor(7, 1);
         lcd.write(6);
     }
+
+    Serial.print("Voltage: ");
+    Serial.println(voltage);
+    Serial.print("Current: ");
+    Serial.println(current);
+    Serial.print("Power: ");
+    Serial.println(power);
+    Serial.print("Temperature: ");
+    Serial.println(temperature);
+    Serial.print("Humidity: ");
+    Serial.println(humidity);
+
+    Serial.println("- - - - - - -");
 }
 
 void Calibrate() {
