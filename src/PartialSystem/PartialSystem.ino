@@ -83,9 +83,6 @@ void setup() {
     currentSensor.setZeroPoint(2943);
     currentSensor.setSensitivity(0.15);
 
-    // Caliberation Command Need To Be Run On First Upload.  
-    // Calibrate();
-
     // initialize LCD
     lcd.init();
     lcd.backlight();
@@ -159,16 +156,16 @@ void readIRremote() {
 
         // only testing 
         // actual temperature can be adjusted
-        if (isTesting) {
-            if (ir_code == "d") {
-                temperature++;
-                delay(1000);
-            }
-            if (ir_code == "19") {
-                temperature--;
-                delay(1000);
-            }
-        }
+        // if (isTesting) {
+        //     if (ir_code == "d") {
+        //         temperature++;
+        //         delay(1000);
+        //     }
+        //     if (ir_code == "19") {
+        //         temperature--;
+        //         delay(1000);
+        //     }
+        // }
 
         // toggles the power saving mode
         if (ir_code == "43") {
@@ -231,7 +228,8 @@ void readTemperature() {
 
 void readVoltage() {
     if (isTesting) {
-        voltage = random(218, 223);
+        voltage = 0;
+        // voltage = random(218, 223);
         return;
     }
 
@@ -241,19 +239,21 @@ void readVoltage() {
 
 void readCurrent() {
     if (isTesting) {
-        int intTemp = int(temperature);
-        if (intTemp == 16) current = 6 + (random(67, 72));
-        if (intTemp == 17) current = 6 + (random(41, 46));
-        if (intTemp == 18) current = 6 + (random(16, 21));
-        if (intTemp == 19) current = 5 + (random(95, 100));
-        if (intTemp == 20) current = 5 + (random(74, 79));
-        if (intTemp == 21) current = 5 + (random(51, 56));
-        if (intTemp == 22) current = 5 + (random(26, 31));
-        if (intTemp == 23) current = 5 + (random(2, 7));
-        if (intTemp == 24) current = 4 + (random(76, 81));
-        if (intTemp == 25) current = 4 + (random(67, 72));
-        if (intTemp == 26) current = 4 + (random(33, 38));
-        if (intTemp == 27) current = 4 + (random(0, 3));
+        current = 0;
+        return;
+        // int intTemp = int(temperature);
+        // if (intTemp == 16) current = 6 + (random(67, 72));
+        // if (intTemp == 17) current = 6 + (random(41, 46));
+        // if (intTemp == 18) current = 6 + (random(16, 21));
+        // if (intTemp == 19) current = 5 + (random(95, 100));
+        // if (intTemp == 20) current = 5 + (random(74, 79));
+        // if (intTemp == 21) current = 5 + (random(51, 56));
+        // if (intTemp == 22) current = 5 + (random(26, 31));
+        // if (intTemp == 23) current = 5 + (random(2, 7));
+        // if (intTemp == 24) current = 4 + (random(76, 81));
+        // if (intTemp == 25) current = 4 + (random(67, 72));
+        // if (intTemp == 26) current = 4 + (random(33, 38));
+        // if (intTemp == 27) current = 4 + (random(0, 3));
     }
 
     current = currentSensor.getCurrentAC();
@@ -344,18 +344,4 @@ void displayData() {
     Serial.println(humidity);
 
     Serial.println("- - - - - - -");
-}
-
-void Calibrate() {
-    while (1) {
-        voltageSensor.calibrate();  
-        Serial.print("Voltage Zero Point: ");
-        Serial.println(voltageSensor.getZeroPoint());
-
-        currentSensor.calibrate();  
-        Serial.print("Current Zero Point:");
-        Serial.println(currentSensor.getZeroPoint());
-
-        delay(500);
-    }
 }
